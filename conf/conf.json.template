@@ -1,0 +1,14 @@
+{
+  "oauth" : {
+    "google" : {
+      "id" : "",
+      "secret" : "",
+      "redirectUrl" : ""
+    },
+    "bitbucket" : {
+      "id" : "",
+      "secret" : "",
+      "redirectUrl" : ""
+    }
+  }
+}

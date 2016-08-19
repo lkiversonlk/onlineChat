@@ -13,7 +13,7 @@ import (
 
 
 func main() {
-	var addr = flag.String("addr", ":3000", "The addr of the application.")
+	var addr = flag.String("addr", ":80", "The addr of the application.")
 	flag.Parse()
 
 	http.Handle("/", handlers.MustAuth(handlers.NewTemplateHandler("chat.html")))

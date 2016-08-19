@@ -27,7 +27,7 @@ var (
 
 var (
 	googleOauth = &oauth2.Config{
-		RedirectURL: "http://www.ripplemaster.cn:3000/auth/callback/google",
+		RedirectURL: "http://www.ripplemaster.cn/auth/callback/google",
 		ClientID: ripplemasterGoogleID,
 		ClientSecret: ripplemasterGoogleKey,
 		Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
@@ -35,7 +35,7 @@ var (
 	}
 
 	bitbucketOauth = &oauth2.Config{
-		RedirectURL: "http://www.ripplemaster.cn:3000/auth/callback/bitbucket",
+		RedirectURL: "http://www.ripplemaster.cn/auth/callback/bitbucket",
 		ClientID: bitbucketID,
 		ClientSecret: bitbucketKey,
 		Scopes: []string{"account", "email"},
