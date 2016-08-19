@@ -15,18 +15,29 @@ import (
 )
 
 var (
+	ripplemasterGoogleID = "364215041019-kofeon73lc382qdc0s16gfrqlamdorth.apps.googleusercontent.com"
+	ripplemasterGoogleKey = "HewZPDIkySsyzBWav0TsibC2"
+	localGoogleID = "364215041019-ijr0dqtjrapdif57satg9451vbn4g91l.apps.googleusercontent.com"
+	localGoogleKey = "I7dIAgUA_53_ht5TmLSPbI3D"
+        bitbucketID = "bD8RagSJqnHxUKa4FF"
+	bitbucketKey = "qtL5UcxYS4HmSZETggBW3SjxeeVdjmU7"
+	localBitbucketID = "HBj7hbYc48UXcBtjk6"
+	localBitbucketKey = "k4MdrDwWmH5p3WNeQWj4gL9Vk5VsHyLW"
+)
+
+var (
 	googleOauth = &oauth2.Config{
-		RedirectURL: "http://localhost:3000/auth/callback/google",
-		ClientID: "364215041019-ijr0dqtjrapdif57satg9451vbn4g91l.apps.googleusercontent.com",
-		ClientSecret: "I7dIAgUA_53_ht5TmLSPbI3D",
+		RedirectURL: "http://www.ripplemaster.cn:3000/auth/callback/google",
+		ClientID: ripplemasterGoogleID,
+		ClientSecret: ripplemasterGoogleKey,
 		Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
 		Endpoint:google.Endpoint,
 	}
 
 	bitbucketOauth = &oauth2.Config{
-		RedirectURL: "http://localhost:3000/auth/callback/bitbucket",
-		ClientID: "HBj7hbYc48UXcBtjk6",
-		ClientSecret: "k4MdrDwWmH5p3WNeQWj4gL9Vk5VsHyLW",
+		RedirectURL: "http://www.ripplemaster.cn:3000/auth/callback/bitbucket",
+		ClientID: bitbucketID,
+		ClientSecret: bitbucketKey,
 		Scopes: []string{"account", "email"},
 		Endpoint:bitbucket.Endpoint,
 	}
