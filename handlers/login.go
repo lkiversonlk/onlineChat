@@ -14,34 +14,20 @@ import (
 	"errors"
 )
 
-var (
-	ripplemasterGoogleID = "364215041019-kofeon73lc382qdc0s16gfrqlamdorth.apps.googleusercontent.com"
-	ripplemasterGoogleKey = "HewZPDIkySsyzBWav0TsibC2"
-	localGoogleID = "364215041019-ijr0dqtjrapdif57satg9451vbn4g91l.apps.googleusercontent.com"
-	localGoogleKey = "I7dIAgUA_53_ht5TmLSPbI3D"
-        bitbucketID = "bD8RagSJqnHxUKa4FF"
-	bitbucketKey = "qtL5UcxYS4HmSZETggBW3SjxeeVdjmU7"
-	localBitbucketID = "HBj7hbYc48UXcBtjk6"
-	localBitbucketKey = "k4MdrDwWmH5p3WNeQWj4gL9Vk5VsHyLW"
-)
+type AuthConfiguration struct{
+	Id string            `json:"id"`
+	Secret string        `json:"secret"`
+	RedirectUrl string   `json:"redirectUrl"`
+}
 
-var (
-	googleOauth = &oauth2.Config{
-		RedirectURL: "http://www.ripplemaster.cn/auth/callback/google",
-		ClientID: ripplemasterGoogleID,
-		ClientSecret: ripplemasterGoogleKey,
-		Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
-		Endpoint:google.Endpoint,
-	}
+type userProfileExtract func(map[string]interface{}) (map[string]interface{}, error)
 
-	bitbucketOauth = &oauth2.Config{
-		RedirectURL: "http://www.ripplemaster.cn/auth/callback/bitbucket",
-		ClientID: bitbucketID,
-		ClientSecret: bitbucketKey,
-		Scopes: []string{"account", "email"},
-		Endpoint:bitbucket.Endpoint,
-	}
-)
+type loginHandler struct {
+	userProfileURL string
+	oauthConfig *oauth2.Config
+	provider string
+	profileExtract userProfileExtract
+}
 
 func saveAuthAndGoRoot(w http.ResponseWriter, r *http.Request, authCookie map[string]interface{}){
 	authCookieValue := objx.New(authCookie).MustBase64()
@@ -72,72 +58,122 @@ func callOauth(oauth *oauth2.Config, code string, url string) (io.ReadCloser, er
 	}
 }
 
-func LoginHandler(w http.ResponseWriter, r *http.Request) {
+func (handler *loginHandler) login(w http.ResponseWriter, r *http.Request) {
+	url := handler.oauthConfig.AuthCodeURL("random")
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+}
+
+func (handler *loginHandler) authUser(w http.ResponseWriter, r *http.Request) {
+	code := r.FormValue("code")
+	if ret, err := callOauth(handler.oauthConfig, code, handler.userProfileURL); err != nil {
+	} else {
+		defer ret.Close()
+		var retDict map[string]interface{}
+		if err := json.NewDecoder(ret).Decode(&retDict); err != nil {
+			log.Fatalln("Fail to decode user response", "-", err)
+		} else {
+			if profile, err := handler.profileExtract(retDict); err != nil {
+				log.Fatalln("Fail to extract user profile from response", "-", err)
+			} else {
+				saveAuthAndGoRoot(w, r, profile)
+			}
+		}
+	}
+}
+
+func googleLoginHandler(config AuthConfiguration) *loginHandler {
+
+	return &loginHandler{
+		userProfileURL: "https://www.googleapis.com/oauth2/v2/userinfo",
+		provider: "google",
+		oauthConfig: &oauth2.Config{
+			RedirectURL: config.RedirectUrl,
+			ClientID: config.Id,
+			ClientSecret: config.Secret,
+			Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
+			Endpoint:google.Endpoint,
+		} ,
+		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
+			result["userid"] = result["name"]
+			return result, nil
+		},
+	}
+}
+
+func bitbucketLoginHandler(config AuthConfiguration) *loginHandler{
+	return &loginHandler{
+		userProfileURL: "https://api.bitbucket.org/1.0/user",
+		provider: "bitbucket",
+		oauthConfig: &oauth2.Config{
+			RedirectURL: config.RedirectUrl,
+			ClientID: config.Id,
+			ClientSecret: config.Secret,
+			Scopes: []string{"account", "email"},
+			Endpoint:bitbucket.Endpoint,
+		} ,
+		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
+			if profile, ok := result["user"].(map[string]interface{}); ok {
+				profile["userid"] = profile["username"]
+				profile["picture"] = profile["avatar"]
+				profile["name"] = profile["username"]
+				return profile, nil
+			} else {
+				log.Fatalln("fail to get user segment from bitbucket response")
+				return nil, ErrOauthAPICall
+			}
+		},
+	}
+}
+
+type LoginHandler struct{
+     handlers map[string](*loginHandler)
+}
+
+var ErrUnknownProvider = errors.New("Unknown provider")
+
+func NewLoginHandler(authConfig map[string]AuthConfiguration) (*LoginHandler){
+	ret := map[string]*loginHandler{}
+	for provider, config := range(authConfig) {
+		fmt.Printf("Preare handler for provider %s, id %s, redirect to %s\n", provider, config.Id, config.RedirectUrl)
+		switch provider {
+		case "google":
+			ret["google"] = googleLoginHandler(config)
+		case "bitbucket":
+			ret["bitbucket"] = bitbucketLoginHandler(config)
+		default:
+			fmt.Printf("Unknown configuration for provider %s\n", provider)
+		}
+	}
+	handler := LoginHandler{ret}
+	return &handler
+}
+
+func (l *LoginHandler) getHandler(provider string) (*loginHandler, error) {
+
+	if handler, ok := l.handlers[provider]; ok {
+		return handler, nil
+	} else {
+		return nil, ErrUnknownProvider
+	}
+}
+
+func (l *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	segs := strings.Split(r.URL.Path, "/")
 	action := segs[2]
 	provider := segs[3]
-	switch action {
-	case "login":
-		switch provider {
-		case "google":
-			url := googleOauth.AuthCodeURL("random")
-			http.Redirect(w, r, url, http.StatusTemporaryRedirect)
-		case "bitbucket":
-			url := bitbucketOauth.AuthCodeURL("random")
-			http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+
+	if handler, err := l.getHandler(provider); err == nil {
+		switch action {
+		case "login":
+			handler.login(w, r)
+		case "callback":
+			handler.authUser(w, r)
 		default:
 			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, "action %s unknown", action)
 		}
-
-	case "callback":
-		code := r.FormValue("code")
-		var oauth *oauth2.Config
-		var userProfileAPI string
-		var userProfileExtractor func(map[string]interface{}) (map[string]interface{}, error)
-
-		switch provider {
-		case "google":
-			oauth = googleOauth
-			userProfileAPI = "https://www.googleapis.com/oauth2/v2/userinfo"
-			userProfileExtractor = func(result map[string]interface{})(map[string]interface{}, error) {
-				result["userid"] = result["name"]
-				return result, nil
-			}
-		case "bitbucket":
-			oauth = bitbucketOauth
-			userProfileAPI = "https://api.bitbucket.org/1.0/user"
-			userProfileExtractor = func(result map[string]interface{})(map[string]interface{}, error) {
-				if profile, ok := result["user"].(map[string]interface{}); ok {
-					profile["userid"] = profile["username"]
-					profile["picture"] = profile["avatar"]
-					profile["name"] = profile["username"]
-					return profile, nil
-				} else {
-					log.Fatalln("fail to get user segment from bitbucket response")
-					return nil, ErrOauthAPICall
-				}
-			}
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if ret, err := callOauth(oauth, code, userProfileAPI); err != nil {
-			log.Fatalf("fail to call oauth api %s\n", userProfileAPI)
-		} else {
-			defer ret.Close()
-			var retDict map[string]interface{}
-			if err := json.NewDecoder(ret).Decode(&retDict); err != nil {
-				log.Fatalln("Fail to decode user response", "-", err)
-			} else {
-				if profile, err := userProfileExtractor(retDict); err != nil {
-					log.Fatalln("Fail to extract user profile from response", "-", err)
-				} else {
-					saveAuthAndGoRoot(w, r, profile)
-				}
-			}
-		}
-	default:
+	} else {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, "Auth action %s not supported", action)
+		fmt.Fprintf(w, "provider %s unknown", provider)
 	}
 }
