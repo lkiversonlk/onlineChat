@@ -125,6 +125,28 @@ func bitbucketLoginHandler(config AuthConfiguration) *loginHandler{
 	}
 }
 
+func wechatLoginHandler(config AuthConfiguration) *loginHandler{
+	return &loginHandler{
+		userProfileURL: "https://api.weixin.qq.com/cgi-bin/user/info",
+		provider: "wechat",
+		oauthConfig: &oauth2.Config{
+			RedirectURL: config.RedirectUrl,
+			ClientID: config.Id,
+			ClientSecret: config.Secret,
+			Scopes: []string{"snsapi_userinfo"},
+			Endpoint:oauth2.Endpoint{
+				AuthURL:"https://open.weixin.qq.com/connect/oauth2/authorize",
+				TokenURL:"https://api.weixin.qq.com/sns/oauth2/access_token",
+			},
+		} ,
+		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
+			result["name"] = result["nickname"]
+			result["userid"] = result["nickname"]
+			result["picture"] = result["headimgurl"]
+			return result, nil
+		},
+	}
+}
 type LoginHandler struct{
      handlers map[string](*loginHandler)
 }
@@ -140,6 +162,8 @@ func NewLoginHandler(authConfig map[string]AuthConfiguration) (*LoginHandler){
 			ret["google"] = googleLoginHandler(config)
 		case "bitbucket":
 			ret["bitbucket"] = bitbucketLoginHandler(config)
+		case "wechat":
+			ret["wechat"] = wechatLoginHandler(config)
 		default:
 			fmt.Printf("Unknown configuration for provider %s\n", provider)
 		}
