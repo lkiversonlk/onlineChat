@@ -12,6 +12,9 @@ import (
 	"encoding/json"
 	"io"
 	"errors"
+	"golang.org/x/net/context"
+	"bytes"
+	"net/url"
 )
 
 type AuthConfiguration struct{
@@ -22,9 +25,62 @@ type AuthConfiguration struct{
 
 type userProfileExtract func(map[string]interface{}) (map[string]interface{}, error)
 
+type oauth2ConfigProxy interface {
+	Exchange(context.Context, string) (*oauth2.Token, error)
+	AuthCodeURL(string, ...oauth2.AuthCodeOption) string
+	//UserInfoRequestUrl(oauth2.Token) string
+	AugUrl(string, *oauth2.Token) string
+}
+
+type commonOauthProxy struct {
+	*oauth2.Config
+}
+
+type wechatOauthProxy struct {
+	*oauth2.Config
+}
+
+func (_ commonOauthProxy)AugUrl(url string, token *oauth2.Token)string {
+	return url + "?access_token=" + token.AccessToken
+}
+
+func (_ wechatOauthProxy)AugUrl(url string, token * oauth2.Token)string {
+	fmt.Println("call wechat AugUrl")
+	fmt.Println(token.Extra("access_token"))
+	fmt.Println(token.AccessToken)
+	if openid, ok := token.Extra("openid").(string); ok {
+		fmt.Println("Openid", openid)
+		//https://api.weixin.qq.com/sns/userinfo?access_token=ACCESS_TOKEN&openid=OPENID&lang=zh_CN
+		return url + "?access_token=" + token.AccessToken + "&openid=" + openid + "&lang=zh_CN"
+	} else {
+		fmt.Println("extra", token.Extra("openid"))
+		return url + "?access_token=" + token.AccessToken + "&lang=zh_CN"
+	}
+
+}
+
+func (c wechatOauthProxy) AuthCodeURL(state string, opts ...oauth2.AuthCodeOption) string {
+	var buf bytes.Buffer
+	buf.WriteString(c.Endpoint.AuthURL)
+	v := url.Values{
+		"response_type": {"code"},
+		"appid":     {c.ClientID},
+		"redirect_uri":  []string{c.RedirectURL},
+		"scope":         []string{strings.Join(c.Scopes, " ")},
+		"state":         []string{state},
+	}
+	if strings.Contains(c.Endpoint.AuthURL, "?") {
+		buf.WriteByte('&')
+	} else {
+		buf.WriteByte('?')
+	}
+	buf.WriteString(v.Encode())
+	return buf.String()
+}
+
 type loginHandler struct {
 	userProfileURL string
-	oauthConfig *oauth2.Config
+	oauthConfig oauth2ConfigProxy
 	provider string
 	profileExtract userProfileExtract
 }
@@ -44,12 +100,12 @@ func saveAuthAndGoRoot(w http.ResponseWriter, r *http.Request, authCookie map[st
 
 var ErrOauthAPICall = errors.New("Fail to get token and call oauth API")
 
-func callOauth(oauth *oauth2.Config, code string, url string) (io.ReadCloser, error) {
+func callOauth(oauth oauth2ConfigProxy, code string, url string) (io.ReadCloser, error) {
 	if token, error := oauth.Exchange(oauth2.NoContext, code); error != nil {
 		log.Fatalf("fail to call %s, error: %s", url, error.Error())
 		return nil, ErrOauthAPICall
 	} else {
-		if response, error := http.Get(url + "?access_token=" + token.AccessToken); error != nil {
+		if response, error := http.Get(oauth.AugUrl(url, token)); error != nil {
 			log.Fatalf("fail to call %s, error: %s", url, error.Error())
 			return nil, ErrOauthAPICall
 		} else {
@@ -86,12 +142,14 @@ func googleLoginHandler(config AuthConfiguration) *loginHandler {
 	return &loginHandler{
 		userProfileURL: "https://www.googleapis.com/oauth2/v2/userinfo",
 		provider: "google",
-		oauthConfig: &oauth2.Config{
-			RedirectURL: config.RedirectUrl,
-			ClientID: config.Id,
-			ClientSecret: config.Secret,
-			Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
-			Endpoint:google.Endpoint,
+		oauthConfig: commonOauthProxy{
+			&oauth2.Config{
+				RedirectURL: config.RedirectUrl,
+				ClientID: config.Id,
+				ClientSecret: config.Secret,
+				Scopes: []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
+				Endpoint:google.Endpoint,
+			},
 		} ,
 		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
 			result["userid"] = result["name"]
@@ -104,12 +162,14 @@ func bitbucketLoginHandler(config AuthConfiguration) *loginHandler{
 	return &loginHandler{
 		userProfileURL: "https://api.bitbucket.org/1.0/user",
 		provider: "bitbucket",
-		oauthConfig: &oauth2.Config{
-			RedirectURL: config.RedirectUrl,
-			ClientID: config.Id,
-			ClientSecret: config.Secret,
-			Scopes: []string{"account", "email"},
-			Endpoint:bitbucket.Endpoint,
+		oauthConfig: commonOauthProxy{
+			&oauth2.Config{
+				RedirectURL: config.RedirectUrl,
+				ClientID: config.Id,
+				ClientSecret: config.Secret,
+				Scopes: []string{"account", "email"},
+				Endpoint:bitbucket.Endpoint,
+			},
 		} ,
 		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
 			if profile, ok := result["user"].(map[string]interface{}); ok {
@@ -125,18 +185,21 @@ func bitbucketLoginHandler(config AuthConfiguration) *loginHandler{
 	}
 }
 
+
 func wechatLoginHandler(config AuthConfiguration) *loginHandler{
 	return &loginHandler{
-		userProfileURL: "https://api.weixin.qq.com/cgi-bin/user/info",
+		userProfileURL: "https://api.weixin.qq.com/sns/userinfo",
 		provider: "wechat",
-		oauthConfig: &oauth2.Config{
-			RedirectURL: config.RedirectUrl,
-			ClientID: config.Id,
-			ClientSecret: config.Secret,
-			Scopes: []string{"snsapi_userinfo"},
-			Endpoint:oauth2.Endpoint{
-				AuthURL:"https://open.weixin.qq.com/connect/oauth2/authorize",
-				TokenURL:"https://api.weixin.qq.com/sns/oauth2/access_token",
+		oauthConfig: wechatOauthProxy{
+			&oauth2.Config{
+				RedirectURL: config.RedirectUrl,
+				ClientID: config.Id,
+				ClientSecret: config.Secret,
+				Scopes: []string{"snsapi_userinfo"},
+				Endpoint:oauth2.Endpoint{
+					AuthURL:"https://open.weixin.qq.com/connect/oauth2/authorize",
+					TokenURL:"https://api.weixin.qq.com/sns/oauth2/access_token",
+				},
 			},
 		} ,
 		profileExtract: func(result map[string]interface{}) (map[string]interface{}, error) {
